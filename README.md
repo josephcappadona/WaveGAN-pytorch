@@ -6,7 +6,7 @@ Befor running, make sure you have the `sc09` dataset, and put that dataset under
 ## Quick Start:
 1. Installation
 ```
-sudo apt-get install libav-tools
+sudo apt-get install ffmpeg
 ```
 
 2. Download dataset
