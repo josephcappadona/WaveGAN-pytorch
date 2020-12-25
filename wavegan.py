@@ -75,7 +75,7 @@ class WaveGANGenerator(nn.Module):
         if self.verbose:
             print(x.shape)
 
-        output = F.tanh(self.deconv_5(x))
+        output = torch.tanh(self.deconv_5(x))
         return output
 
 
