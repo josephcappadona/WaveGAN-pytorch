@@ -5,6 +5,7 @@ import torch
 import random
 import logging
 import librosa
+import soundfile as sf
 import argparse
 import pescador
 import numpy as np
@@ -14,6 +15,7 @@ from torch.autograd import Variable
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 
 LOGGER = logging.getLogger('wavegan')
@@ -26,7 +28,7 @@ def make_path(output_path):
     return output_path
 
 
-traindata = DATASET_NAME
+traindata = str(Path(DATA_DIR) / DATASET_NAME)
 output = make_path(OUTPUT_PATH)
 
 
@@ -47,7 +49,11 @@ def save_samples(epoch_samples, epoch, output_dir, fs=16000):
     for idx, sample in enumerate(epoch_samples):
         output_path = os.path.join(sample_dir, "{}.wav".format(idx+1))
         sample = sample[0]
-        librosa.output.write_wav(output_path, sample, fs)
+        sf.write(output_path, sample, fs)
+
+def get_label(fp):
+    label_str = Path(fp).stem.split('_')[0]
+    return label_str
 
 
 # Adapted from @jtcramer https://github.com/jtcramer/wavegan/blob/master/sample.py.
@@ -56,6 +62,7 @@ def sample_generator(filepath, window_length=16384, fs=16000):
     Audio sample generator
     """
     try:
+        label = get_label(filepath)
         audio_data, _ = librosa.load(filepath, sr=fs)
 
         # Clip magnitude
@@ -89,7 +96,7 @@ def sample_generator(filepath, window_length=16384, fs=16000):
         sample = sample.astype('float32')
         assert not np.any(np.isnan(sample))
 
-        yield {'X': sample}
+        yield {'X': sample, 'y': label}
 
 
 def get_all_audio_filepaths(audio_dir):
@@ -97,7 +104,6 @@ def get_all_audio_filepaths(audio_dir):
             for (root, dir_names, file_names) in os.walk(audio_dir, followlinks=True)
             for fname in file_names
             if (fname.lower().endswith('.wav') or fname.lower().endswith('.mp3'))]
-
 
 def batch_generator(audio_path_list, batch_size):
     streamers = []
@@ -136,7 +142,7 @@ def split_data(audio_path_list, valid_ratio, test_ratio, batch_size):
 
 
 # Adapted from https://github.com/caogang/wgan-gp/blob/master/gan_toy.py
-def calc_gradient_penalty(net_dis, real_data, fake_data, batch_size, lmbda, use_cuda=False):
+def calc_gradient_penalty(net_dis, real_data, fake_data, y_ohe, batch_size, lmbda, use_cuda=False):
     # Compute interpolation factors
     alpha = torch.rand(batch_size, 1, 1)
     alpha = alpha.expand(real_data.size())
@@ -149,7 +155,7 @@ def calc_gradient_penalty(net_dis, real_data, fake_data, batch_size, lmbda, use_
     interpolates = autograd.Variable(interpolates, requires_grad=True)
 
     # Evaluate discriminator
-    disc_interpolates = net_dis(interpolates)
+    disc_interpolates = net_dis(interpolates, y_ohe)
 
     # Obtain gradients of the discriminator with respect to the inputs
     gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
@@ -230,7 +236,7 @@ def parse_arguments():
     parser.add_argument('-ne', '--num-epochs', dest='num_epochs', type=int, default=EPOCHS, help='Number of epochs')
     parser.add_argument('-ng', '--ngpus', dest='ngpus', type=int, default=4,
                         help='Number of GPUs to use for training')
-    parser.add_argument('-ld', '--latent-dim', dest='latent_dim', type=int, default=100,
+    parser.add_argument('-ld', '--latent-dim', dest='latent_dim', type=int, default=LATENT_DIM,
                         help='Size of latent dimension used by generator')
     parser.add_argument('-eps', '--epochs-per-sample', dest='epochs_per_sample', type=int, default=SAMPLE_EVERY,
                         help='How many epochs between every set of samples generated for inspection')

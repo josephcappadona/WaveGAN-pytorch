@@ -1,4 +1,6 @@
 numpy
 librosa
+soundfile
 pescador
 matplotlib
+gdown

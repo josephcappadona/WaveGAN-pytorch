@@ -51,14 +51,18 @@ train_iter = iter(train_data)
 valid_iter = iter(valid_data)
 test_iter = iter(test_data)
 
-classes = set([str(p).split('/')[-1].split('_')[0] for p in audio_paths])
-print(classes)
-# overwrite latent_dim
-latent_dim = len(classes)
+classes = set()
+if DATASET_NAME.startswith('sc09'):
+    classes = set([str(p).split('/')[-1].split('_')[0] for p in audio_paths])
+    print(classes)
+class_map = {c:i for i, c in enumerate(sorted(classes))}
+n_classes = len(classes)
+print(f'n_classes = {n_classes}')
+print(f'latent_dim = {latent_dim}')
 
 # =============Network===============
-netG = ConditionalWaveGANGenerator(model_size=model_size, ngpus=ngpus, latent_dim=latent_dim, upsample=True)
-netD = ConditionalWaveGANDiscriminator(model_size=model_size, ngpus=ngpus)
+netG = ConditionalWaveGANGenerator(n_classes=n_classes, model_size=model_size, ngpus=ngpus, latent_dim=latent_dim, upsample=True)
+netD = ConditionalWaveGANDiscriminator(n_classes=n_classes, model_size=model_size, ngpus=ngpus)
 
 
 if cuda:
@@ -123,28 +127,40 @@ for epoch in range(1, epochs+1):
                 noise = noise.cuda()
             noise_Var = Variable(noise, requires_grad=False)
 
-            real_data_Var = numpy_to_var(next(train_iter)['X'], cuda)
+            # OHE
+            next_batch = next(train_iter)
+            real_data_Var = numpy_to_var(next_batch['X'], cuda)
+            # label_to_var
+
+            ohe = torch.zeros(batch_size, n_classes)
+            if cuda:
+                ohe = ohe.cuda()
+            ohe_Var = Variable(ohe)
+            for i, label in enumerate(next_batch['y']):
+                ohe_Var[i, class_map[label]] = 1
 
             # a) compute loss contribution from real training data
-            D_real = netD(real_data_Var)
+            D_real = netD(real_data_Var, ohe_Var)
             D_real = D_real.mean()  # avg loss
             D_real.backward(neg_one)  # loss * -1
 
             # b) compute loss contribution from generated data, then backprop.
-            fake = autograd.Variable(netG(noise_Var).data)
-            D_fake = netD(fake)
+            fake = autograd.Variable(netG(noise_Var, ohe_Var).data)
+            D_fake = netD(fake, ohe_Var)
             D_fake = D_fake.mean()
             D_fake.backward(one)
 
             # c) compute gradient penalty and backprop
             gradient_penalty = calc_gradient_penalty(netD, real_data_Var.data,
-                                                     fake.data, batch_size, lmbda,
+                                                     fake.data, ohe_Var, batch_size, lmbda,
                                                      use_cuda=cuda)
             gradient_penalty.backward(one)
+            print('gradient_penalty', gradient_penalty)
 
             # Compute cost * Wassertein loss..
             D_cost_train = D_fake - D_real + gradient_penalty
             D_wass_train = D_real - D_fake
+            print('D_wass_train', D_wass_train)
 
             # Update gradient of discriminator.
             optimizerD.step()
@@ -154,18 +170,27 @@ for epoch in range(1, epochs+1):
             #############################
             netD.zero_grad()
 
-            valid_data_Var = numpy_to_var(next(valid_iter)['X'], cuda)
-            D_real_valid = netD(valid_data_Var)
+            next_valid_batch = next(valid_iter)
+
+            valid_data_Var = numpy_to_var(next_valid_batch['X'], cuda)
+            valid_ohe = torch.zeros(batch_size, n_classes)
+            if cuda:
+                valid_ohe = valid_ohe.cuda()
+            valid_ohe_Var = Variable(valid_ohe, requires_grad=True)
+            for i, label in enumerate(next_valid_batch['y']):
+                valid_ohe_Var[i, class_map[label]] = 1
+
+            D_real_valid = netD(valid_data_Var, valid_ohe_Var)
             D_real_valid = D_real_valid.mean()  # avg loss
 
             # b) compute loss contribution from generated data, then backprop.
-            fake_valid = netG(noise_Var)
-            D_fake_valid = netD(fake_valid)
+            fake_valid = netG(noise_Var, valid_ohe_Var)
+            D_fake_valid = netD(fake_valid, valid_ohe_Var)
             D_fake_valid = D_fake_valid.mean()
 
             # c) compute gradient penalty and backprop
             gradient_penalty_valid = calc_gradient_penalty(netD, valid_data_Var.data,
-                                                           fake_valid.data, batch_size, lmbda,
+                                                           fake_valid.data, valid_ohe_Var, batch_size, lmbda,
                                                            use_cuda=cuda)
             # Compute metrics and record in batch history.
             D_cost_valid = D_fake_valid - D_real_valid + gradient_penalty_valid
@@ -199,13 +224,22 @@ for epoch in range(1, epochs+1):
             noise = noise.cuda()
         noise_Var = Variable(noise, requires_grad=False)
 
-        fake = netG(noise_Var)
-        G = netD(fake)
+        gen_ohe = torch.zeros(batch_size, n_classes)
+        if cuda:
+            gen_ohe = gen_ohe.cuda()
+        gen_ohe_Var = Variable(gen_ohe)
+        labels_sample = np.random.choice(list(classes), size=batch_size)
+        for i, label in enumerate(labels_sample):
+            gen_ohe_Var[i, class_map[label]] = 1
+
+        fake = netG(noise_Var, gen_ohe_Var)
+        G = netD(fake, gen_ohe_Var)
         G = G.mean()
 
         # Update gradients.
         G.backward(neg_one)
         G_cost = -G
+        print('G_cost', G_cost)
 
         optimizerG.step()
 
@@ -214,7 +248,7 @@ for epoch in range(1, epochs+1):
             G_cost = G_cost.cpu()
         G_cost_epoch.append(G_cost.data.numpy())
 
-        if i % (BATCH_NUM // 5) == 0:
+        if i % int(math.ceil(BATCH_NUM / 5)) == 0:
             LOGGER.info("{} Epoch={} Batch: {}/{} D_c:{:.4f} | D_w:{:.4f} | G:{:.4f}".format(time_since(start), epoch,
                                                                                              i, BATCH_NUM,
                                                                                              D_cost_train.data.numpy(),

@@ -1,6 +1,4 @@
-piano/
-sc09/
-*.tar.gz
+data/
 venv/
 output/
 __pycache__/
