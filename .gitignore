@@ -3,3 +3,6 @@ sc09/
 *.tar.gz
 venv/
 output/
+__pycache__/
+.DS_Store
+*.log
