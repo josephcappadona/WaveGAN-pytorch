@@ -1,3 +1,5 @@
 piano/
 sc09/
 *.tar.gz
+venv/
+output/
