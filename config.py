@@ -1,5 +1,5 @@
 # Training
-EPOCHS = 180
+EPOCHS = 2
 BATCH_SIZE = 10
 
 SAMPLE_EVERY = 1  # Generate audio samples every 1 epoch.
